@@ -1,19 +1,22 @@
 datadir="./data/nmt_data"
 train_dir="./model_dir"
 python -m nmt.nmt \
-    --attention=scaled_luong
+    --attention_architecture=gnmt_v2 \
+    --attention=scaled_luong \
+    --encoder_type=gnmt \
     --src=vi --tgt=en \
     --vocab_prefix=${datadir}/vocab  \
     --train_prefix=${datadir}/train \
     --dev_prefix=${datadir}/tst2012  \
     --test_prefix=${datadir}/tst2013 \
-    --out_dir=${train_dir}/nmt_model \
+    --out_dir=${train_dir}/nmt_3layer_gnmt \
     --num_train_steps=12000 \
     --steps_per_stats=100 \
     --num_layers=3 \
     --num_units=256 \
-    --dropout=0.2 \
-    --metrics=bleu
+    --dropout=0.2 
+    # \
+    # --metrics=bleu
 
 
 
@@ -33,6 +36,8 @@ python -m nmt.nmt \
 #     --num_units=128 \
 #     --dropout=0.2 \
 #     --metrics=bleu
+
+
 # After training, we can use the same inference command with the new out_dir for inference:
 
 # python -m nmt.nmt \
