@@ -76,6 +76,14 @@ def add_arguments(parser):
           attention.\
       """)
   parser.add_argument(
+      "--output_attention", type="bool", nargs="?", const=True,
+      default=True,
+      help="""\
+      Only used in standard attention_architecture. Whether use attention as
+      the cell output at each timestep.
+      .\
+      """)
+  parser.add_argument(
       "--pass_hidden_state", type="bool", nargs="?", const=True,
       default=True,
       help="""\
@@ -87,22 +95,26 @@ def add_arguments(parser):
   parser.add_argument("--optimizer", type=str, default="sgd", help="sgd | adam")
   parser.add_argument("--learning_rate", type=float, default=1.0,
                       help="Learning rate. Adam: 0.001 | 0.0001")
-  parser.add_argument("--learning_rate_warmup_steps", type=int, default=0,
+  parser.add_argument("--warmup_steps", type=int, default=0,
                       help="How many steps we inverse-decay learning.")
-  parser.add_argument("--learning_rate_warmup_factor", type=float, default=1.0,
-                      help="The inverse decay factor for each warmup step.")
+  parser.add_argument("--warmup_scheme", type=str, default="t2t", help="""\
+      How to warmup learning rates. Options include:
+        t2t: Tensor2Tensor's way, start with lr 100 times smaller, then
+             exponentiate until the specified lr.\
+      """)
   parser.add_argument("--start_decay_step", type=int, default=0,
                       help="When we start to decay")
   parser.add_argument("--decay_steps", type=int, default=10000,
                       help="How frequent we decay")
-  parser.add_argument("--decay_factor", type=float, default=0.98,
+  parser.add_argument("--decay_factor", type=float, default=1.0,
                       help="How much we decay.")
   parser.add_argument(
       "--learning_rate_decay_scheme", type=str, default="", help="""\
       If specified, overwrite start_decay_step, decay_steps, decay_factor.
       Options include:
         luong: after 1/2 num train steps, we start halving the learning rate
-        for 5 times before finishing.\
+        for 5 times before finishing.
+        luong10: same as luong but halve the learning rate 10 times instead.\
       """)
 
   parser.add_argument(
@@ -170,7 +182,7 @@ def add_arguments(parser):
 
   # Default settings works well (rarely need to change)
   parser.add_argument("--unit_type", type=str, default="lstm",
-                      help="lstm | gru | layer_norm_lstm")
+                      help="lstm | gru | layer_norm_lstm | nas")
   parser.add_argument("--forget_bias", type=float, default=1.0,
                       help="Forget bias for BasicLSTMCell.")
   parser.add_argument("--dropout", type=float, default=0.2,
@@ -189,14 +201,9 @@ def add_arguments(parser):
   parser.add_argument("--num_buckets", type=int, default=5,
                       help="Put data into similar-length buckets.")
 
-  # BPE
-  parser.add_argument("--bpe_delimiter", type=str, default=None,
-                      help="Set to @@ to activate BPE."
-                           "Implicitly sets subword_option to 'bpe' when set.")
-
   # SPM
-  parser.add_argument("--subword_option", type=str, default=None,
-                      choices=["bpe", "spm"],
+  parser.add_argument("--subword_option", type=str, default="",
+                      choices=["", "bpe", "spm"],
                       help="""\
                       Set to bpe or spm to activate subword desegmentation.\
                       """)
@@ -286,6 +293,7 @@ def create_hparams(flags):
       # Attention mechanisms
       attention=flags.attention,
       attention_architecture=flags.attention_architecture,
+      output_attention=flags.output_attention,
       pass_hidden_state=flags.pass_hidden_state,
 
       # Train
@@ -296,8 +304,8 @@ def create_hparams(flags):
       init_weight=flags.init_weight,
       max_gradient_norm=flags.max_gradient_norm,
       learning_rate=flags.learning_rate,
-      learning_rate_warmup_steps = flags.learning_rate_warmup_steps,
-      learning_rate_warmup_factor = flags.learning_rate_warmup_factor,
+      warmup_steps=flags.warmup_steps,
+      warmup_scheme=flags.warmup_scheme,
       start_decay_step=flags.start_decay_step,
       decay_factor=flags.decay_factor,
       decay_steps=flags.decay_steps,
@@ -322,7 +330,6 @@ def create_hparams(flags):
       # Vocab
       sos=flags.sos if flags.sos else vocab_utils.SOS,
       eos=flags.eos if flags.eos else vocab_utils.EOS,
-      bpe_delimiter=flags.bpe_delimiter,
       subword_option=flags.subword_option,
       check_special_token=flags.check_special_token,
 
@@ -353,16 +360,6 @@ def extend_hparams(hparams):
 
   if hparams.subword_option and hparams.subword_option not in ["spm", "bpe"]:
     raise ValueError("subword option must be either spm, or bpe")
-  if hparams.bpe_delimiter and hparams.bpe_delimiter != "@@":
-    raise ValueError("BPE delimiter value must be '@@' %s",
-                     hparams.bpe_delimiter)
-  if hparams.bpe_delimiter == "@@":
-    # if bpe_delimiter is set, subword_option will automatically set to bpe
-    if hparams.subword_option == "spm":
-      raise ValueError("Unable to set the subword option to spm "
-                       "if bpe delimiter is set")
-    else:
-      hparams.subword_option = "bpe"
 
   # Flags
   utils.print_out("# hparams:")
@@ -503,7 +500,7 @@ def run_main(flags, default_hparams, train_fn, inference_fn, target_session=""):
 
   # Load hparams.
   hparams = create_or_load_hparams(
-    out_dir, default_hparams, flags.hparams_path, save_hparams=(jobid==0))
+      out_dir, default_hparams, flags.hparams_path, save_hparams=(jobid==0))
 
   if flags.inference_input_file:
     # Inference indices

@@ -57,6 +57,7 @@ def create_test_hparams(unit_type="lstm",
       # Attention mechanisms
       attention=attention,
       attention_architecture=attention_architecture,
+      output_attention=True,
       pass_hidden_state=True,
 
       # Train
@@ -66,8 +67,8 @@ def create_test_hparams(unit_type="lstm",
       max_gradient_norm=5.0,
       max_emb_gradient_norm=None,
       learning_rate=1.0,
-      learning_rate_warmup_steps=0,
-      learning_rate_warmup_factor=1.0,
+      warmup_steps=0,
+      warmup_scheme="t2t",
       start_decay_step=0,
       decay_factor=0.98,
       decay_steps=100,
@@ -97,7 +98,6 @@ def create_test_hparams(unit_type="lstm",
 
       # For inference.py test
       source_reverse=False,
-      bpe_delimiter="@@",
       subword_option="bpe",
       src="src",
       tgt="tgt",
@@ -121,11 +121,11 @@ def create_test_iterator(hparams, mode):
     reverse_tgt_vocab_table = lookup_ops.index_to_string_table_from_tensor(
         tgt_vocab_mapping)
 
-  src_dataset = tf.contrib.data.Dataset.from_tensor_slices(
+  src_dataset = tf.data.Dataset.from_tensor_slices(
       tf.constant(["a a b b c", "a b b"]))
 
   if mode != tf.contrib.learn.ModeKeys.INFER:
-    tgt_dataset = tf.contrib.data.Dataset.from_tensor_slices(
+    tgt_dataset = tf.data.Dataset.from_tensor_slices(
         tf.constant(["a b c b c", "a b c b"]))
     return (
         iterator_utils.get_iterator(

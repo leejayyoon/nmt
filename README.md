@@ -1,6 +1,6 @@
 # Neural Machine Translation (seq2seq) Tutorial
 
-*Authors: Thang Luong, Eugene Brevdo, Rui Zhao*
+*Authors: Thang Luong, Eugene Brevdo, Rui Zhao ([Google Research Blogpost](https://research.googleblog.com/2017/07/building-your-own-neural-machine.html), [Github](https://github.com/tensorflow/nmt))*
 
 *This version of the tutorial requires [TensorFlow Version 1.4+](https://github.com/tensorflow/tensorflow/#installation). 
 Warning: There is a [bug fix for Beam Search](https://github.com/tensorflow/tensorflow/commit/18f89c81d288f191abd56501ec6f86fe29265bdd#diff-b012cb799623e95f3088242d9bb17d58) that is not in TensorFlow 1.4.*
@@ -37,6 +37,7 @@ Warning: There is a [bug fix for Beam Search](https://github.com/tensorflow/tens
 - [Other resources](#other-resources)
 - [Acknowledgment](#acknowledgment)
 - [References](#references)
+- [BibTex](#bibtex)
 
 
 # Introduction
@@ -582,7 +583,7 @@ In our implementation of
 the
 [AttentionWrapper](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/contrib/seq2seq/python/ops/attention_wrapper.py),
 we borrow some terminology
-from [(Weston et al., 2015)](https://arxiv.org/abs/1409.0473) in their work on
+from [(Weston et al., 2015)](https://arxiv.org/abs/1410.3916) in their work on
 *memory networks*. Instead of having readable & writable memory, the attention
 mechanism presented in this tutorial is a *read-only* memory. Specifically, the
 set of source hidden states (or their transformed versions, e.g.,
@@ -831,7 +832,7 @@ than using *feed_dict* and are the standard for both single-machine and
 distributed training.
 
 Starting in TensorFlow 1.2, there is a new system available for reading data
-into TensorFlow models: dataset iterators, as found in the **tf.contrib.data**
+into TensorFlow models: dataset iterators, as found in the **tf.data**
 module. Data iterators are flexible, easy to reason about and to manipulate, and
 provide efficiency and multithreading by leveraging the TensorFlow C++ runtime.
 
@@ -840,16 +841,16 @@ containing multiple filenames.  Some examples:
 
 ``` python
 # Training dataset consists of multiple files.
-train_dataset = tf.contrib.data.TextLineDataset(train_files)
+train_dataset = tf.data.TextLineDataset(train_files)
 
 # Evaluation dataset uses a single file, but we may
 # point to a different file for each evaluation round.
 eval_file = tf.placeholder(tf.string, shape=())
-eval_dataset = tf.contrib.data.TextLineDataset(eval_file)
+eval_dataset = tf.data.TextLineDataset(eval_file)
 
 # For inference, feed input data to the dataset directly via feed_dict.
 infer_batch = tf.placeholder(tf.string, shape=(num_infer_examples,))
-infer_dataset = tf.contrib.data.Dataset.from_tensor_slices(infer_batch)
+infer_dataset = tf.data.Dataset.from_tensor_slices(infer_batch)
 ```
 
 All datasets can be treated similarly via input processing.  This includes
@@ -884,7 +885,7 @@ translations of each other and each one is read into its own dataset, then a new
 dataset containing the tuples of the zipped lines can be created via:
 
 ``` python
-source_target_dataset = tf.contrib.data.Dataset.zip((source_dataset, target_dataset))
+source_target_dataset = tf.data.Dataset.zip((source_dataset, target_dataset))
 ```
 
 Batching of variable-length sentences is straightforward. The following
@@ -1083,7 +1084,6 @@ train for 12K steps (~ 12 epochs); after 8K steps, we start halving learning
 rate every 1K step.
 
 ***Results***.
-TODO(rzhao): add URL for English-Vietnamese trained model.
 
 Below are the averaged results of 2 models
 ([model 1](http://download.tensorflow.org/models/nmt/envi_model_1.zip),
@@ -1115,13 +1115,12 @@ is 1024. We train for 350K steps (~ 10 epochs); after 170K steps, we start
 halving learning rate every 17K step.
 
 ***Results***.
-TODO(rzhao): add URL for German-English trained model.
 
 The first 2 rows are the averaged results of 2 models
 ([model 1](http://download.tensorflow.org/models/nmt/deen_model_1.zip),
 [model 2](http://download.tensorflow.org/models/nmt/deen_model_2.zip)).
 Results in the third row is with GNMT attention
-([model](http://download.tensorflow.org/models/nmt/deen_gnmt_model_4_layer.zip))
+([model](http://download.tensorflow.org/models/nmt/10122017/deen_gnmt_model_4_layer.zip))
 ; trained with 4 GPUs.
 
 Systems | newstest2013 (dev) | newstest2015
@@ -1150,8 +1149,8 @@ With GNMT attention, we obtain from 50%-100% speed-ups with multiple gpus.
 ## WMT English-German &mdash; Full Comparison
 The first 2 rows are our models with GNMT
 attention:
-[model 1 (4 layers)](http://download.tensorflow.org/models/nmt/ende_gnmt_model_4_layer.zip),
-[model 2 (8 layers)](http://download.tensorflow.org/models/nmt/ende_gnmt_model_8_layer.zip).
+[model 1 (4 layers)](http://download.tensorflow.org/models/nmt/10122017/ende_gnmt_model_4_layer.zip),
+[model 2 (8 layers)](http://download.tensorflow.org/models/nmt/10122017/ende_gnmt_model_8_layer.zip).
 
 Systems | newstest2014 | newstest2015
 --- | :---: | :---:
@@ -1246,3 +1245,13 @@ We would like to thank Denny Britz, Anna Goldie, Derek Murray, and Cinjon Resnic
 -  Ilya Sutskever, Oriol Vinyals, and Quoc
    V. Le. 2014.[ Sequence to sequence learning with neural networks](https://papers.nips.cc/paper/5346-sequence-to-sequence-learning-with-neural-networks.pdf). NIPS.
 
+# BibTex
+
+```
+@article{luong17,
+  author  = {Minh{-}Thang Luong and Eugene Brevdo and Rui Zhao},
+  title   = {Neural Machine Translation (seq2seq) Tutorial},
+  journal = {https://github.com/tensorflow/nmt},
+  year    = {2017},
+}
+```

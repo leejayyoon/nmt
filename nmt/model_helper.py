@@ -28,10 +28,10 @@ def get_initializer(init_op, seed=None, init_weight=None):
     return tf.random_uniform_initializer(
         -init_weight, init_weight, seed=seed)
   elif init_op == "glorot_normal":
-    return tf.contrib.keras.initializers.glorot_normal(
+    return tf.keras.initializers.glorot_normal(
         seed=seed)
   elif init_op == "glorot_uniform":
-    return tf.contrib.keras.initializers.glorot_uniform(
+    return tf.keras.initializers.glorot_uniform(
         seed=seed)
   else:
     raise ValueError("Unknown init_op %s" % init_op)
@@ -72,8 +72,8 @@ def create_train_model(
     src_vocab_table, tgt_vocab_table = vocab_utils.create_vocab_tables(
         src_vocab_file, tgt_vocab_file, hparams.share_vocab)
 
-    src_dataset = tf.contrib.data.TextLineDataset(src_file)
-    tgt_dataset = tf.contrib.data.TextLineDataset(tgt_file)
+    src_dataset = tf.data.TextLineDataset(src_file)
+    tgt_dataset = tf.data.TextLineDataset(tgt_file)
     skip_count_placeholder = tf.placeholder(shape=(), dtype=tf.int64)
 
     iterator = iterator_utils.get_iterator(
@@ -132,8 +132,8 @@ def create_eval_model(model_creator, hparams, scope=None, extra_args=None):
         src_vocab_file, tgt_vocab_file, hparams.share_vocab)
     src_file_placeholder = tf.placeholder(shape=(), dtype=tf.string)
     tgt_file_placeholder = tf.placeholder(shape=(), dtype=tf.string)
-    src_dataset = tf.contrib.data.TextLineDataset(src_file_placeholder)
-    tgt_dataset = tf.contrib.data.TextLineDataset(tgt_file_placeholder)
+    src_dataset = tf.data.TextLineDataset(src_file_placeholder)
+    tgt_dataset = tf.data.TextLineDataset(tgt_file_placeholder)
     iterator = iterator_utils.get_iterator(
         src_dataset,
         tgt_dataset,
@@ -185,7 +185,7 @@ def create_infer_model(model_creator, hparams, scope=None, extra_args=None):
     src_placeholder = tf.placeholder(shape=[None], dtype=tf.string)
     batch_size_placeholder = tf.placeholder(shape=[], dtype=tf.int64)
 
-    src_dataset = tf.contrib.data.Dataset.from_tensor_slices(
+    src_dataset = tf.data.Dataset.from_tensor_slices(
         src_placeholder)
     iterator = iterator_utils.get_infer_iterator(
         src_dataset,
@@ -276,8 +276,8 @@ def create_emb_for_encoder_and_decoder(share_vocab,
   return embedding_encoder, embedding_decoder
 
 
-def _single_cell(unit_type, num_units, forget_bias, dropout,
-                 mode, residual_connection=False, device_str=None):
+def _single_cell(unit_type, num_units, forget_bias, dropout, mode,
+                 residual_connection=False, device_str=None, residual_fn=None):
   """Create an instance of a single RNN cell."""
   # dropout (= 1 - keep_prob) is set to 0 during eval and infer
   dropout = dropout if mode == tf.contrib.learn.ModeKeys.TRAIN else 0.0
@@ -298,6 +298,9 @@ def _single_cell(unit_type, num_units, forget_bias, dropout,
         num_units,
         forget_bias=forget_bias,
         layer_norm=True)
+  elif unit_type == "nas":
+    utils.print_out("  NASCell", new_line=False)
+    single_cell = tf.contrib.rnn.NASCell(num_units)
   else:
     raise ValueError("Unknown unit type %s!" % unit_type)
 
@@ -310,7 +313,8 @@ def _single_cell(unit_type, num_units, forget_bias, dropout,
 
   # Residual
   if residual_connection:
-    single_cell = tf.contrib.rnn.ResidualWrapper(single_cell)
+    single_cell = tf.contrib.rnn.ResidualWrapper(
+        single_cell, residual_fn=residual_fn)
     utils.print_out("  %s" % type(single_cell).__name__, new_line=False)
 
   # Device Wrapper
@@ -324,7 +328,7 @@ def _single_cell(unit_type, num_units, forget_bias, dropout,
 
 def _cell_list(unit_type, num_units, num_layers, num_residual_layers,
                forget_bias, dropout, mode, num_gpus, base_gpu=0,
-               single_cell_fn=None):
+               single_cell_fn=None, residual_fn=None):
   """Create a list of RNN cells."""
   if not single_cell_fn:
     single_cell_fn = _single_cell
@@ -341,6 +345,7 @@ def _cell_list(unit_type, num_units, num_layers, num_residual_layers,
         mode=mode,
         residual_connection=(i >= num_layers - num_residual_layers),
         device_str=get_device_str(i + base_gpu, num_gpus),
+        residual_fn=residual_fn
     )
     utils.print_out("")
     cell_list.append(single_cell)
@@ -399,7 +404,7 @@ def gradient_clip(gradients, max_gradient_norm):
   gradient_norm_summary.append(
       tf.summary.scalar("clipped_gradient", tf.global_norm(clipped_gradients)))
 
-  return clipped_gradients, gradient_norm_summary
+  return clipped_gradients, gradient_norm_summary, gradient_norm
 
 
 def load_model(model, ckpt, session, name):

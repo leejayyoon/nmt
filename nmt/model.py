@@ -132,9 +132,6 @@ class BaseModel(object):
         opt = tf.train.GradientDescentOptimizer(self.learning_rate)
         tf.summary.scalar("lr", self.learning_rate)
       elif hparams.optimizer == "adam":
-        assert float(
-            hparams.learning_rate
-        ) <= 0.001, "! High Adam learning rate %g" % hparams.learning_rate
         opt = tf.train.AdamOptimizer(self.learning_rate)
 
       # Gradients
@@ -143,17 +140,18 @@ class BaseModel(object):
           params,
           colocate_gradients_with_ops=hparams.colocate_gradients_with_ops)
 
-      clipped_gradients, gradient_norm_summary = model_helper.gradient_clip(
+      clipped_grads, grad_norm_summary, grad_norm = model_helper.gradient_clip(
           gradients, max_gradient_norm=hparams.max_gradient_norm)
+      self.grad_norm = grad_norm
 
       self.update = opt.apply_gradients(
-          zip(clipped_gradients, params), global_step=self.global_step)
+          zip(clipped_grads, params), global_step=self.global_step)
 
       # Summary
       self.train_summary = tf.summary.merge([
           tf.summary.scalar("lr", self.learning_rate),
           tf.summary.scalar("train_loss", self.train_loss),
-      ] + gradient_norm_summary)
+      ] + grad_norm_summary)
 
     if self.mode == tf.contrib.learn.ModeKeys.INFER:
       self.infer_summary = self._get_infer_summary(hparams)
@@ -169,41 +167,51 @@ class BaseModel(object):
 
   def _get_learning_rate_warmup(self, hparams):
     """Get learning rate warmup."""
-    warmup_steps = hparams.learning_rate_warmup_steps
-    warmup_factor = hparams.learning_rate_warmup_factor
-    print("  learning_rate=%g, learning_rate_warmup_steps=%d, "
-          "learning_rate_warmup_factor=%g, starting_learning_rate=%g" %
-          (hparams.learning_rate, warmup_steps, warmup_factor,
-           (hparams.learning_rate * warmup_factor ** warmup_steps)))
+    warmup_steps = hparams.warmup_steps
+    warmup_scheme = hparams.warmup_scheme
+    utils.print_out("  learning_rate=%g, warmup_steps=%d, warmup_scheme=%s" %
+                    (hparams.learning_rate, warmup_steps, warmup_scheme))
 
     # Apply inverse decay if global steps less than warmup steps.
     # Inspired by https://arxiv.org/pdf/1706.03762.pdf (Section 5.3)
     # When step < warmup_steps,
     #   learing_rate *= warmup_factor ** (warmup_steps - step)
-    inv_decay = warmup_factor**(
-        tf.to_float(warmup_steps - self.global_step))
+    if warmup_scheme == "t2t":
+      # 0.01^(1/warmup_steps): we start with a lr, 100 times smaller
+      warmup_factor = tf.exp(tf.log(0.01) / warmup_steps)
+      inv_decay = warmup_factor**(
+          tf.to_float(warmup_steps - self.global_step))
+    else:
+      raise ValueError("Unknown warmup scheme %s" % warmup_scheme)
 
     return tf.cond(
-        self.global_step < hparams.learning_rate_warmup_steps,
+        self.global_step < hparams.warmup_steps,
         lambda: inv_decay * self.learning_rate,
         lambda: self.learning_rate,
         name="learning_rate_warump_cond")
 
   def _get_learning_rate_decay(self, hparams):
     """Get learning rate decay."""
-    if (hparams.learning_rate_decay_scheme and
-        hparams.learning_rate_decay_scheme == "luong"):
-      start_decay_step = int(hparams.num_train_steps / 2)
-      decay_steps = int(hparams.num_train_steps / 10)  # decay 5 times
+    if hparams.learning_rate_decay_scheme in ["luong", "luong10"]:
+      start_factor = 2
+      start_decay_step = int(hparams.num_train_steps / start_factor)
       decay_factor = 0.5
+
+      # decay 5 times
+      if hparams.learning_rate_decay_scheme == "luong":
+        decay_steps = int(hparams.num_train_steps / (5 * start_factor))
+      # decay 10 times
+      elif hparams.learning_rate_decay_scheme == "luong10":
+        decay_steps = int(hparams.num_train_steps / (10 * start_factor))
     else:
       start_decay_step = hparams.start_decay_step
       decay_steps = hparams.decay_steps
       decay_factor = hparams.decay_factor
-    print("  decay_scheme=%s, start_decay_step=%d, decay_steps %d, "
-          "decay_factor %g" %
-          (hparams.learning_rate_decay_scheme,
-           hparams.start_decay_step, hparams.decay_steps, hparams.decay_factor))
+    utils.print_out("  decay_scheme=%s, start_decay_step=%d, decay_steps %d, "
+                    "decay_factor %g" % (hparams.learning_rate_decay_scheme,
+                                         hparams.start_decay_step,
+                                         hparams.decay_steps,
+                                         hparams.decay_factor))
 
     return tf.cond(
         self.global_step < start_decay_step,
@@ -234,7 +242,9 @@ class BaseModel(object):
                      self.train_summary,
                      self.global_step,
                      self.word_count,
-                     self.batch_size])
+                     self.batch_size,
+                     self.grad_norm,
+                     self.learning_rate])
 
   def eval(self, sess):
     assert self.mode == tf.contrib.learn.ModeKeys.EVAL

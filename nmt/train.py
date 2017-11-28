@@ -33,8 +33,8 @@ from .utils import nmt_utils
 utils.check_tensorflow_version()
 
 __all__ = [
-    "run_sample_decode",
-    "run_internal_eval", "run_external_eval", "run_full_eval", "train"
+    "run_sample_decode", "run_internal_eval", "run_external_eval",
+    "run_full_eval", "init_stats", "update_stats", "check_stats", "train"
 ]
 
 
@@ -52,7 +52,8 @@ def run_sample_decode(infer_model, infer_sess, model_dir, hparams,
 
 
 def run_internal_eval(
-    eval_model, eval_sess, model_dir, hparams, summary_writer):
+    eval_model, eval_sess, model_dir, hparams, summary_writer,
+    use_test_set=True):
   """Compute internal evaluation (perplexity) for both dev / test."""
   with eval_model.graph.as_default():
     loaded_eval_model, global_step = model_helper.create_or_load_model(
@@ -69,7 +70,7 @@ def run_internal_eval(
                            eval_model.iterator, dev_eval_iterator_feed_dict,
                            summary_writer, "dev")
   test_ppl = None
-  if hparams.test_prefix:
+  if use_test_set and hparams.test_prefix:
     test_src_file = "%s.%s" % (hparams.test_prefix, hparams.src)
     test_tgt_file = "%s.%s" % (hparams.test_prefix, hparams.tgt)
     test_eval_iterator_feed_dict = {
@@ -83,7 +84,7 @@ def run_internal_eval(
 
 
 def run_external_eval(infer_model, infer_sess, model_dir, hparams,
-                      summary_writer, save_best_dev=True):
+                      summary_writer, save_best_dev=True, use_test_set=True):
 
   """Compute external evaluation (bleu, rouge, etc.) for both dev / test."""
   with infer_model.graph.as_default():
@@ -109,7 +110,7 @@ def run_external_eval(infer_model, infer_sess, model_dir, hparams,
       save_on_best=save_best_dev)
 
   test_scores = None
-  if hparams.test_prefix:
+  if use_test_set and hparams.test_prefix:
     test_src_file = "%s.%s" % (hparams.test_prefix, hparams.src)
     test_tgt_file = "%s.%s" % (hparams.test_prefix, hparams.tgt)
     test_infer_iterator_feed_dict = {
@@ -146,6 +147,56 @@ def run_full_eval(model_dir, infer_model, infer_sess, eval_model, eval_sess,
                                              hparams.metrics)
 
   return result_summary, global_step, dev_scores, test_scores, dev_ppl, test_ppl
+
+
+def init_stats():
+  """Initialize statistics that we want to keep."""
+  return {"step_time": 0.0, "loss": 0.0, "predict_count": 0.0,
+          "total_count": 0.0, "grad_norm": 0.0}
+
+
+def update_stats(stats, summary_writer, start_time, step_result):
+  """Update stats: write summary and accumulate statistics."""
+  (_, step_loss, step_predict_count, step_summary, global_step,
+   step_word_count, batch_size, grad_norm, learning_rate) = step_result
+
+  # Write step summary.
+  summary_writer.add_summary(step_summary, global_step)
+
+  # update statistics
+  stats["step_time"] += (time.time() - start_time)
+  stats["loss"] += (step_loss * batch_size)
+  stats["predict_count"] += step_predict_count
+  stats["total_count"] += float(step_word_count)
+  stats["grad_norm"] += grad_norm
+  stats["learning_rate"] = learning_rate
+
+  return global_step
+
+
+def check_stats(stats, global_step, steps_per_stats, hparams, log_f):
+  """Print statistics and also check for overflow."""
+  # Print statistics for the previous epoch.
+  avg_step_time = stats["step_time"] / steps_per_stats
+  avg_grad_norm = stats["grad_norm"] / steps_per_stats
+  train_ppl = utils.safe_exp(
+      stats["loss"] / stats["predict_count"])
+  speed = stats["total_count"] / (1000 * stats["step_time"])
+  utils.print_out(
+      "  global step %d lr %g "
+      "step-time %.2fs wps %.2fK ppl %.2f gN %.2f %s" %
+      (global_step, stats["learning_rate"],
+       avg_step_time, speed, train_ppl, avg_grad_norm,
+       _get_best_results(hparams)),
+      log_f)
+
+  # Check for overflow
+  is_overflow = False
+  if math.isnan(train_ppl) or math.isinf(train_ppl) or train_ppl > 1e20:
+    utils.print_out("  step %d overflow, stop early" % global_step, log_f)
+    is_overflow = True
+
+  return is_overflow
 
 
 def train(hparams, scope=None, target_session=""):
@@ -219,8 +270,7 @@ def train(hparams, scope=None, target_session=""):
   last_external_eval_step = global_step
 
   # This is the training loop.
-  step_time, checkpoint_loss, checkpoint_predict_count = 0.0, 0.0, 0.0
-  checkpoint_total_count = 0.0
+  stats = init_stats()
   speed, train_ppl = 0.0, 0.0
   start_train_time = time.time()
 
@@ -242,8 +292,6 @@ def train(hparams, scope=None, target_session=""):
     start_time = time.time()
     try:
       step_result = loaded_train_model.train(train_sess)
-      (_, step_loss, step_predict_count, step_summary, global_step,
-       step_word_count, batch_size) = step_result
       hparams.epoch_step += 1
     except tf.errors.OutOfRangeError:
       # Finished going through the training dataset.  Go to next epoch.
@@ -262,37 +310,19 @@ def train(hparams, scope=None, target_session=""):
           feed_dict={train_model.skip_count_placeholder: 0})
       continue
 
-    # Write step summary.
-    summary_writer.add_summary(step_summary, global_step)
-
-    # update statistics
-    step_time += (time.time() - start_time)
-
-    checkpoint_loss += (step_loss * batch_size)
-    checkpoint_predict_count += step_predict_count
-    checkpoint_total_count += float(step_word_count)
+    # Write step summary and accumulate statistics
+    global_step = update_stats(stats, summary_writer, start_time, step_result)
 
     # Once in a while, we print statistics.
     if global_step - last_stats_step >= steps_per_stats:
       last_stats_step = global_step
-
-      # Print statistics for the previous epoch.
-      avg_step_time = step_time / steps_per_stats
-      train_ppl = utils.safe_exp(checkpoint_loss / checkpoint_predict_count)
-      speed = checkpoint_total_count / (1000 * step_time)
-      utils.print_out(
-          "  global step %d lr %g "
-          "step-time %.2fs wps %.2fK ppl %.2f %s" %
-          (global_step,
-           loaded_train_model.learning_rate.eval(session=train_sess),
-           avg_step_time, speed, train_ppl, _get_best_results(hparams)),
-          log_f)
-      if math.isnan(train_ppl):
+      is_overflow = check_stats(stats, global_step, steps_per_stats, hparams,
+                                log_f)
+      if is_overflow:
         break
 
-      # Reset timer and loss.
-      step_time, checkpoint_loss, checkpoint_predict_count = 0.0, 0.0, 0.0
-      checkpoint_total_count = 0.0
+      # Reset statistics
+      stats = init_stats()
 
     if global_step - last_eval_step >= steps_per_eval:
       last_eval_step = global_step
@@ -347,9 +377,13 @@ def train(hparams, scope=None, target_session=""):
       log_f)
   utils.print_time("# Done training!", start_train_time)
 
+  summary_writer.close()
+
   utils.print_out("# Start evaluating saved best models.")
   for metric in hparams.metrics:
     best_model_dir = getattr(hparams, "best_" + metric + "_dir")
+    summary_writer = tf.summary.FileWriter(
+        os.path.join(best_model_dir, summary_name), infer_model.graph)
     result_summary, best_global_step, _, _, _, _ = run_full_eval(
         best_model_dir, infer_model, infer_sess, eval_model, eval_sess, hparams,
         summary_writer, sample_src_data, sample_tgt_data)
@@ -357,8 +391,8 @@ def train(hparams, scope=None, target_session=""):
                     "step-time %.2f wps %.2fK, %s, %s" %
                     (metric, best_global_step, avg_step_time, speed,
                      result_summary, time.ctime()), log_f)
+    summary_writer.close()
 
-  summary_writer.close()
   return (dev_scores, test_scores, dev_ppl, test_ppl, global_step)
 
 
@@ -412,8 +446,8 @@ def _sample_decode(model, global_step, sess, hparams, iterator, src_data,
       sent_id=0,
       tgt_eos=hparams.eos,
       subword_option=hparams.subword_option)
-  utils.print_out("    src: %s" % src_data[decode_id])
-  utils.print_out("    ref: %s" % tgt_data[decode_id])
+  utils.print_out(b"    src: " + src_data[decode_id])
+  utils.print_out(b"    ref: " + tgt_data[decode_id])
   utils.print_out(b"    nmt: " + translation)
 
   # Summary
