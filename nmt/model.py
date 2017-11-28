@@ -94,7 +94,9 @@ class BaseModel(object):
             hparams.tgt_vocab_size, use_bias=False, name="output_projection")
 
     ## Train graph
-    res = self.build_graph(hparams, scope=scope)
+    # build graph returns:       
+    #   return ( logits, loss, final_context_state, sample_id)
+    res = self.build_graph(hparams, scope=scope) 
 
     if self.mode == tf.contrib.learn.ModeKeys.TRAIN:
       self.train_loss = res[1]
