@@ -1,15 +1,15 @@
 datadir="./data/nmt_data"
-train_dir="./model_dir"
+train_dir="./model_dir/nmt_3layer_gnmt"
 python -m nmt.nmt \
     --attention_architecture=gnmt_v2 \
     --attention=scaled_luong \
     --encoder_type=gnmt \
     --src=vi --tgt=en \
-    --vocab_prefix=${datadir}/vocab  \
+    --vocab_prefix=${train_dir}/vocab  \
     --train_prefix=${datadir}/train \
     --dev_prefix=${datadir}/tst2012  \
     --test_prefix=${datadir}/tst2013 \
-    --out_dir=${train_dir}/nmt_3layer_gnmt \
+    --out_dir=${train_dir} \
     --num_train_steps=12000 \
     --steps_per_stats=100 \
     --num_layers=3 \
