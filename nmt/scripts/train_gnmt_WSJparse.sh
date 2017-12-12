@@ -1,11 +1,11 @@
-datadir="./data/nmt_data"
+datadir="/home/jaylee/repository/data/WSJ_parse"
 train_dir="./model_dir/nmt_3layer_gnmt"
 python -m nmt.nmt \
     --attention_architecture=gnmt_v2 \
     --attention=scaled_luong \
     --encoder_type=gnmt \
     --src=encode --tgt=decode \
-    --vocab_prefix=${train_dir}/vocab  \
+    --vocab_prefix=${datadir}/vocab  \
     --train_prefix=${datadir}/split-train \
     --dev_prefix=${datadir}/split-dev  \
     --test_prefix=${datadir}/split-test \
